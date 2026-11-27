@@ -245,7 +245,7 @@ def count_lines(tests, key, labels, first, better, worse):
             if not group:
                 continue
             count = {v: sum(t["verdict"] == v for t in group) for v in VERDICTS}
-            significant = {sign: sum(t["p"] < 0.05 and np.sign(t["diff"]) == sign for t in group) for sign in (-1, 1)}
+            significant = {sign: sum(t["p"] < 0.05 and np.sign(t["effect"]) == sign for t in group) for sign in (-1, 1)}
             lines.append(f"| {labels[value]} | {MEASURES[m]} | {count['mieux']} ({significant[-1]}) | "
                          f"{count['pire']} ({significant[1]}) | {count['équivalent'] if m == 'stress' else '–'} | "
                          f"{count['indécis']} | {len(group)} |")
