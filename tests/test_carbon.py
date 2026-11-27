@@ -17,6 +17,8 @@ def test_track_writes_one_row(tmp_path):
     assert [r["name"] for r in runs] == ["unit", "unit-2"]
     for r in runs:
         assert r["duration_s"] >= 0 and r["energy_kwh"] >= 0 and r["co2_g"] >= 0
+        # the total is the sum of the components
+        assert r["cpu_kwh"] + r["gpu_kwh"] + r["ram_kwh"] == pytest.approx(r["energy_kwh"], abs=1e-12)
 
 
 def test_track_writes_the_row_when_the_block_raises(tmp_path):

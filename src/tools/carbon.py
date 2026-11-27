@@ -58,7 +58,8 @@ def track(name, out=DEFAULT_CSV, tracking_mode="process", measure_power_secs=15,
 
 
 def read_runs(path=DEFAULT_CSV):
-    """Rows of the CSV as dicts: name, duration_s, energy_kwh, co2_g, cpu, gpu (one per measured block)."""
+    """Rows of the CSV as dicts: name, duration_s, energy_kwh, co2_g, cpu, gpu, and the energy of each
+    component cpu_kwh, gpu_kwh, ram_kwh (one row per measured block)."""
     with open(path, newline="", encoding="utf-8") as f:
         return [{
             "name": row["project_name"],
@@ -67,6 +68,9 @@ def read_runs(path=DEFAULT_CSV):
             "co2_g": 1000 * float(row["emissions"]),
             "cpu": row["cpu_model"],
             "gpu": row["gpu_model"],
+            "cpu_kwh": float(row["cpu_energy"]),
+            "gpu_kwh": float(row["gpu_energy"]),
+            "ram_kwh": float(row["ram_energy"]),
         } for row in csv.DictReader(f)]
 
 
