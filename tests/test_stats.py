@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from stats import bootstrap_ci, holm, paired_test
+from stats import bootstrap_ci, equivalence_test, holm, paired_difference_ci, paired_test, rank_biserial
 
 
 def test_bootstrap_ci_covers_the_mean_and_shrinks():
@@ -33,3 +33,49 @@ def test_holm_against_a_hand_computation():
     # sorted p: 0.01 (x4 = 0.04), 0.02 (x3 = 0.06), 0.03 (x2 = 0.06), 0.5 (x1 = 0.5)
     assert holm([0.03, 0.5, 0.01, 0.02]) == pytest.approx([0.06, 0.5, 0.04, 0.06])
     assert holm([0.9, 0.8]) == pytest.approx([1.0, 1.0])
+
+
+def test_paired_difference_ci():
+    rng = np.random.default_rng(2)
+    base = rng.normal(0, 1, 400)
+    noise = rng.normal(0.3, 0.2, 400)
+    mean, lo, hi = paired_difference_ci(base + noise, base)
+    assert mean == pytest.approx(noise.mean()) and lo < 0.3 < hi
+    # paired: the interval follows the spread of the differences (0.2), not of the values (1)
+    assert (hi - lo) / 2 == pytest.approx(1.96 * 0.2 / np.sqrt(400), rel=0.2)
+
+
+def test_rank_biserial_against_a_hand_computation():
+    # differences -1, +2, -3, -4: ranks 1, 2, 3, 4; R+ = 2, R- = 8; (2 - 8) / 10
+    assert rank_biserial([0, 2, 0, 0], [1, 0, 3, 4]) == pytest.approx(-0.6)
+    assert rank_biserial([1, 2, 3], [2, 3, 4]) == -1.0
+    assert rank_biserial([2, 3, 4], [1, 2, 3]) == 1.0
+    assert rank_biserial([1, 2], [1, 2]) == 0.0
+    # equal pairs are dropped: same value with or without them
+    assert rank_biserial([0, 2, 0, 0, 5, 5], [1, 0, 3, 4, 5, 5]) == pytest.approx(-0.6)
+
+
+def test_rank_biserial_does_not_grow_with_the_sample():
+    """A tiny shift becomes "significant" with enough graphs; the effect size stays small."""
+    rng = np.random.default_rng(3)
+    effect, p = {}, {}
+    for n in (100, 10_000):
+        base, noise = rng.normal(0, 1, n), rng.normal(0.05, 1, n)
+        effect[n] = rank_biserial(base + noise, base)
+        p[n] = paired_test(base + noise, base)[1]
+    assert p[10_000] < 1e-3 < p[100]
+    assert abs(effect[10_000]) < 0.1
+
+
+def test_equivalence_test():
+    rng = np.random.default_rng(4)
+    base = rng.normal(1, 0.1, 500)
+    same = base + rng.normal(0, 0.01, 500)
+    assert equivalence_test(same, base, margin=0.01) < 1e-6      # within the margin
+    assert equivalence_test(base + 0.05, base, margin=0.01) > 0.5  # shifted by five margins
+    assert equivalence_test(base - 0.05, base, margin=0.01) > 0.5
+    # few noisy pairs: neither different nor shown equivalent
+    few, noise = base[:8], rng.normal(0, 0.05, 8)
+    assert paired_test(few + noise, few)[1] > 0.05 and equivalence_test(few + noise, few, margin=0.01) > 0.05
+    with pytest.raises(ValueError):
+        equivalence_test(same, base, margin=0)
