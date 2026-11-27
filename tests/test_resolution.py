@@ -189,6 +189,22 @@ def test_sweep_setting_end_to_end(make_graph):
         assert selection[kind]["score"] == "share"  # the rule that chose is written next to the choice
 
 
+def test_sweep_setting_refines_other_test_methods(make_graph):
+    """refined_tests: the refinement chosen on the validation starts is applied to any method of the test."""
+    from resolution import sweep_setting
+    torch.manual_seed(0)
+    g = [make_graph(GRID, name=f"g{i}") for i in range(3)]
+    crowded = lambda: torch.rand(16, 2) * 10  # noqa: E731
+    val = {"kk": [(crowded(), g[0])]}
+    test = {"kk": [(crowded(), g[1]), (crowded(), g[2])], "random": [(crowded(), g[1]), (crowded(), g[2])]}
+    rows, _ = sweep_setting(80, 4.0, 1.0, val, test, ["kk"], fractions=(0.3,), learning_rates=(1.0,), steps=5,
+                            batch_size=2, kinds=("screen",), refined_tests=["random", "kk"])
+    assert {r["method"] for r in rows} == {"kk", "random", "kk+screen", "random+screen"}
+    before = sum(r["merged_nodes"] for r in rows if r["method"] == "random")
+    after = sum(r["merged_nodes"] for r in rows if r["method"] == "random+screen")
+    assert after <= before  # a start that had no validation drawings is refined too
+
+
 def test_evaluate_all_in_a_process_pool_matches_serial(make_graph):
     import multiprocessing
     from resolution import evaluate_all

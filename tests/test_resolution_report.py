@@ -20,7 +20,7 @@ def test_report_end_to_end(tmp_path):
     script.OUT = tmp_path
     rng = random.Random(0)
     methods = ["random", "kk", "deepgd", "coregd", "ours", "ours500",
-               "kk+screen", "kk+geometric", "ours+screen", "ours+geometric"]
+               "kk+screen", "kk+geometric", "ours+screen", "ours+geometric", "coregd+screen"]
     rows = []
     for size in (100, 500):
         for radius in (2.0, 4.0):
@@ -52,6 +52,10 @@ def test_report_end_to_end(tmp_path):
              for line in md.split("## Décompte des verdicts")[1].splitlines() if line.startswith("| géométrique |")}
     assert count["Nœuds fusionnés"][0] == "8" and count["Nœuds fusionnés"][1] == "0"
     assert count["Stress"][:3] == ["0", "0", "8"]
+    # refined the same way, the synthetic starts end up alike: our model against CoRe-GD, 4 settings, all undecided
+    assert "## Le départ compte-t-il encore après l'affinage écran ?" in md
+    assert "| CoRe-GD | Nœuds fusionnés | 0 (0) | 0 (0) | – | 4 | 4 |" in md
+    assert "| KK | Nœuds fusionnés | 0 (0) | 0 (0) | – | 4 | 4 |" in md
     for m in ("hidden_nodes", "merged_nodes", "ambiguous_edges", "stress"):
         for name in ("methods", "screen_vs_geometric"):
             assert (tmp_path / f"{m}_{name}.png").stat().st_size > 10_000

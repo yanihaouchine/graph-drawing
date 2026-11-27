@@ -41,7 +41,8 @@ RADII = (2.0, 4.0, 8.0)
 SETTINGS = [(s, r, 1.0) for s in SIZES for r in RADII] + [(200, 4.0, 3.0)]
 COMPARE_NAMES = {"Aléatoire": "random", "Kamada-Kawai": "kk", "DeepGD": "deepgd", "CoRe-GD": "coregd",
                  "Notre modèle": "ours", "Notre modèle + affinage": "ours500"}
-REFINED = ["kk", "ours"]
+REFINED = ["kk", "ours"]  # starts whose validation drawings balance the weights and choose each refinement
+STARTS = ["random", "kk", "deepgd", "coregd", "ours"]  # starts of the test that can be refined (--starts)
 
 
 # -----------------------------------------------------------------------------------------------------------
@@ -113,7 +114,7 @@ def run(args):
             t = time.perf_counter()
             rows, chosen = sweep_setting(size, radius, width, val, test, REFINED, device, pool,
                                          fractions, rates, steps, kinds=kinds, measure_starts=not args.only_refined,
-                                         score=args.score)
+                                         score=args.score, refined_tests=args.starts.split(","))
             key = f"{size}px_r{radius:g}_w{width:g}"
             selection[key] = chosen
             for row in rows:
@@ -139,6 +140,12 @@ LABELS = {"random": "Aléatoire", "kk": "Kamada-Kawai", "deepgd": "DeepGD", "cor
           "kk+geometric_m1": "KK + géométrique, marge 1 px", "kk+geometric_m2": "KK + géométrique, marge 2 px",
           "ours+geometric_m1": "Notre modèle + géométrique, marge 1 px",
           "ours+geometric_m2": "Notre modèle + géométrique, marge 2 px"}
+SHORT = {"random": "Aléatoire", "kk": "KK", "deepgd": "DeepGD", "coregd": "CoRe-GD", "ours": "Notre modèle"}
+for _start in STARTS:  # every start with every refinement, after the rows above (the order of the tables)
+    LABELS.setdefault(f"{_start}+screen", f"{SHORT[_start]} + affinage écran")
+    LABELS.setdefault(f"{_start}+geometric", f"{SHORT[_start]} + affinage géométrique")
+    for _margin in (1, 2):
+        LABELS.setdefault(f"{_start}+geometric_m{_margin}", f"{SHORT[_start]} + géométrique, marge {_margin} px")
 CONTROLS = {"geometric": "géométrique", "geometric_m1": "géométrique, marge 1 px",
             "geometric_m2": "géométrique, marge 2 px"}
 EXTRA_ROWS = ("margin",)  # tags of extra runs (--tag) merged into the report when present
@@ -245,6 +252,31 @@ def count_lines(tests, key, labels, first, better, worse):
     return lines
 
 
+def start_lines(table, full=()):
+    """Report section: once refined in screen space, does the starting drawing still matter? Our model refined
+    against every other start refined the same way, paired by graph. full: saturated settings, left out of
+    the count. Empty when no other refined start is in the rows."""
+    others = {start: SHORT[start] for start in STARTS if start != "ours"}
+    tests = paired_tests(table, [("ours+screen", f"{start}+screen", {"start": start}) for start in others])
+    if not tests:
+        return []
+    lines = ["", "## Le départ compte-t-il encore après l'affinage écran ?", "",
+             "Notre modèle affiné à l'écran contre chaque autre départ affiné de la même façon (même affinage, "
+             "choisi sur la validation à partir des départs " + " et ".join(SHORT[s_] for s_ in REFINED) + "), "
+             "apparié par graphe. Négatif : partir de notre modèle fait mieux. Mêmes tests et mêmes verdicts que "
+             f"ci-dessus, Holm sur les {len(tests)} tests.", "",
+             "| s | r | w | autre départ | mesure | notre modèle − autre départ | r | p (Holm) | verdict |",
+             "|---|---|---|---|---|---|---|---|---|"]
+    for t in tests:
+        s_, r_, w_ = t["setting"]
+        lines.append(f"| {s_:g} | {r_:g} | {w_:g} | {others[t['start']]} | {MEASURES[t['measure']]} | {t['diff']:+.4f} "
+                     f"[{t['low']:+.4f}, {t['high']:+.4f}] | {t['effect']:+.2f} | {t['p']:.2g}{' *' if t['p'] < 0.05 else ''} "
+                     f"| {t['verdict']} |")
+    kept = [t for t in tests if t["setting"] not in full]
+    lines += ["", f"Décompte par réglage{' (hors réglages saturés)' if full else ''} :", ""]
+    return lines + count_lines(kept, "start", others, "autre départ", "notre modèle mieux", "notre modèle pire")
+
+
 def selection_lines(suffix=""):
     """Report section on the refinements chosen on the validation graphs, from the selection*.json files
     present: weight fraction and learning rate of each, and whether the choice sits on a bound of the grid."""
@@ -297,7 +329,7 @@ def report(args):
 
     # screen vs each control present, paired by graph, Holm over every (setting, start, control, measure)
     tests = paired_tests(table, [(f"{start}+screen", f"{start}+{control}", {"start": start, "control": control})
-                                 for start in REFINED for control in CONTROLS])
+                                 for start in STARTS for control in CONTROLS])
     stress_tests = [t for t in tests if t["same"] is not None]
     lines += ["## Écran contre les témoins géométriques", "",
               "Différence moyenne écran − témoin, appariée par graphe [IC à 95 % par bootstrap] (négatif : l'écran "
@@ -326,6 +358,7 @@ def report(args):
                        f"{SATURATED:.0%} des nœuds)", [t for t in tests if t["setting"] not in full]))
     for title, kept in groups:
         lines += ["", f"### {title}", ""] + count_lines(kept, "control", CONTROLS, "témoin", "écran mieux", "écran pire")
+    lines += start_lines(table, full)
     lines += selection_lines(suffix)
     (OUT / f"results_resolution{suffix}.md").write_text("\n".join(lines) + "\n")
     figures(table, args.quick)
@@ -400,6 +433,8 @@ if __name__ == "__main__":
     p_run.add_argument("--quick", action="store_true")
     p_run.add_argument("--kinds", default="screen,geometric", help="refinement kinds (resolution.TERMS)")
     p_run.add_argument("--only-refined", action="store_true", help="do not measure the starting drawings again")
+    p_run.add_argument("--starts", default=",".join(STARTS),
+                       help="test drawings to refine, comma separated; kk,ours: those of the first sweep")
     p_run.add_argument("--fractions", default="", help="weight fractions tried, comma separated (resolution.FRACTIONS)")
     p_run.add_argument("--rates", default="", help="learning rates tried, comma separated (resolution.LEARNING_RATES)")
     p_run.add_argument("--score", default="share", choices=("share", "pairs"),

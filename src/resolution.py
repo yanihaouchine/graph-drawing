@@ -252,12 +252,14 @@ def on_bound(chosen):
 
 def sweep_setting(size, radius, width, val, test, refined_starts, device="cpu", pool=None,
                   fractions=FRACTIONS, learning_rates=LEARNING_RATES, steps=STEPS, batch_size=64,
-                  kinds=KINDS, measure_starts=True, score="share"):
+                  kinds=KINDS, measure_starts=True, score="share", refined_tests=None):
     """One setting (image size, node radius, edge width) of the sweep.
 
     val, test: {method: [(positions, graph), ...]} starting drawings in ANY frame (rescaled here), graphs with
     any style (restyled here). The same graphs, in the same order, for every method. refined_starts: methods
-    of `val` / `test` to refine (e.g. ["kk", "ours"]); val needs only those.
+    of `val` whose drawings serve to balance the weights and choose the refinement (e.g. ["kk", "ours"]); val
+    needs only those. refined_tests: methods of `test` to refine with that choice (default: refined_starts);
+    it may hold methods without validation drawings, which then get a refinement chosen without them.
     For each kind of `kinds` ("screen", "geometric", ...): balanced weights from the validation starting drawings, then every
     (fraction, learning rate) is tried on the validation set and one is chosen by `choose` with the defect score
     `score`, the same way for both kinds. Then every method of `test` is measured as it is, and each refined start with each kind.
@@ -298,7 +300,7 @@ def sweep_setting(size, radius, width, val, test, refined_starts, device="cpu", 
     if measure_starts:  # False: only the refinements (e.g. extra controls, the starts are already measured)
         for method, drawings in test.items():
             add(method, drawings)
-    for start in refined_starts:
+    for start in (refined_starts if refined_tests is None else refined_tests):
         graphs = [g for _, g in test[start]]
         for kind, chosen in selection.items():
             P = refine_all([p for p, _ in test[start]], graphs, size, make_loss(kind, chosen["weights"]),
