@@ -199,6 +199,52 @@ def verdict(test):
     return "indécis"
 
 
+def paired_tests(table, pairs):
+    """Paired tests of method a against method b on the COMPARED measures, in every setting that has both.
+    pairs: [(a, b, tags)], tags being copied into each test. The p-values are Holm-adjusted over all the tests
+    returned, and those of the stress equivalence over the stress tests; each test gets its verdict."""
+    from stats import equivalence_test, holm, paired_difference_ci, paired_test, rank_biserial
+
+    tests = []
+    for setting, methods in sorted(table.items()):
+        for a_name, b_name, tags in pairs:
+            if a_name not in methods or b_name not in methods:
+                continue
+            for m in COMPARED:
+                a, b = [r[m] for r in methods[a_name]], [r[m] for r in methods[b_name]]
+                diff, p = paired_test(a, b)
+                _, lo, hi = paired_difference_ci(a, b)
+                # stress: is a within STRESS_MARGIN of b? (a test of difference cannot say)
+                same = equivalence_test(a, b, STRESS_MARGIN * float(np.mean(b))) if m == "stress" else None
+                tests.append({"setting": setting, **tags, "measure": m, "diff": diff, "low": lo, "high": hi,
+                              "effect": rank_biserial(a, b), "p": p, "same": same})
+    for t, p in zip(tests, holm([t["p"] for t in tests])):
+        t["p"] = p
+    stress_tests = [t for t in tests if t["same"] is not None]
+    for t, p in zip(stress_tests, holm([t["same"] for t in stress_tests])):
+        t["same"] = p
+    for t in tests:
+        t["verdict"] = verdict(t)
+    return tests
+
+
+def count_lines(tests, key, labels, first, better, worse):
+    """Table counting the verdicts of `tests` per value of t[key] (labelled by `labels`) and measure; in
+    parentheses, the significant differences whatever their size."""
+    lines = [f"| {first} | mesure | {better} | {worse} | équivalent | indécis | total |", "|---|---|---|---|---|---|---|"]
+    for value in labels:
+        for m in COMPARED:
+            group = [t for t in tests if t[key] == value and t["measure"] == m]
+            if not group:
+                continue
+            count = {v: sum(t["verdict"] == v for t in group) for v in VERDICTS}
+            significant = {sign: sum(t["p"] < 0.05 and np.sign(t["diff"]) == sign for t in group) for sign in (-1, 1)}
+            lines.append(f"| {labels[value]} | {MEASURES[m]} | {count['mieux']} ({significant[-1]}) | "
+                         f"{count['pire']} ({significant[1]}) | {count['équivalent'] if m == 'stress' else '–'} | "
+                         f"{count['indécis']} | {len(group)} |")
+    return lines
+
+
 def selection_lines(suffix=""):
     """Report section on the refinements chosen on the validation graphs, from the selection*.json files
     present: weight fraction and learning rate of each, and whether the choice sits on a bound of the grid."""
@@ -225,7 +271,7 @@ def selection_lines(suffix=""):
 
 
 def report(args):
-    from stats import bootstrap_ci, equivalence_test, holm, paired_difference_ci, paired_test, rank_biserial
+    from stats import bootstrap_ci
 
     suffix = "_quick" if args.quick else ""
     paths = [OUT / f"rows{suffix}.csv"] + [p for p in (OUT / f"rows_{t}{suffix}.csv" for t in EXTRA_ROWS) if p.exists()]
@@ -250,26 +296,9 @@ def report(args):
         lines.append("")
 
     # screen vs each control present, paired by graph, Holm over every (setting, start, control, measure)
-    tests = []
-    for setting, methods in sorted(table.items()):
-        for start in REFINED:
-            for control in CONTROLS:
-                if f"{start}+{control}" not in methods:
-                    continue
-                for m in COMPARED:
-                    a = [r[m] for r in methods[f"{start}+screen"]]
-                    b = [r[m] for r in methods[f"{start}+{control}"]]
-                    diff, p = paired_test(a, b)
-                    _, lo, hi = paired_difference_ci(a, b)
-                    # stress: is the screen within STRESS_MARGIN of the control? (a test of difference cannot say)
-                    same = equivalence_test(a, b, STRESS_MARGIN * float(np.mean(b))) if m == "stress" else None
-                    tests.append({"setting": setting, "start": start, "control": control, "measure": m, "diff": diff,
-                                  "low": lo, "high": hi, "effect": rank_biserial(a, b), "p": p, "same": same})
-    for t, p in zip(tests, holm([t["p"] for t in tests])):
-        t["p"] = p
+    tests = paired_tests(table, [(f"{start}+screen", f"{start}+{control}", {"start": start, "control": control})
+                                 for start in REFINED for control in CONTROLS])
     stress_tests = [t for t in tests if t["same"] is not None]
-    for t, p in zip(stress_tests, holm([t["same"] for t in stress_tests])):
-        t["same"] = p
     lines += ["## Écran contre les témoins géométriques", "",
               "Différence moyenne écran − témoin, appariée par graphe [IC à 95 % par bootstrap] (négatif : l'écran "
               "fait mieux sur ces mesures, toutes à minimiser). r : corrélation bisériale de rangs appariée, "
@@ -283,7 +312,6 @@ def report(args):
               "|---|---|---|---|---|---|---|---|---|---|"]
     for t in tests:
         s_, r_, w_ = t["setting"]
-        t["verdict"] = verdict(t)
         lines.append(f"| {s_:g} | {r_:g} | {w_:g} | {t['start']} | {CONTROLS[t['control']]} | "
                      f"{MEASURES[t['measure']]} | {t['diff']:+.4f} [{t['low']:+.4f}, {t['high']:+.4f}] | "
                      f"{t['effect']:+.2f} | {t['p']:.2g}{' *' if t['p'] < 0.05 else ''} | {t['verdict']} |")
@@ -297,18 +325,7 @@ def report(args):
         groups.append((f"Hors réglages saturés ({names} : toutes les méthodes y fusionnent plus de "
                        f"{SATURATED:.0%} des nœuds)", [t for t in tests if t["setting"] not in full]))
     for title, kept in groups:
-        lines += ["", f"### {title}", "",
-                  "| témoin | mesure | écran mieux | écran pire | équivalent | indécis | total |", "|---|---|---|---|---|---|---|"]
-        for control in CONTROLS:
-            for m in COMPARED:
-                group = [t for t in kept if t["control"] == control and t["measure"] == m]
-                if not group:
-                    continue
-                count = {v: sum(t["verdict"] == v for t in group) for v in VERDICTS}
-                significant = {sign: sum(t["p"] < 0.05 and np.sign(t["diff"]) == sign for t in group) for sign in (-1, 1)}
-                lines.append(f"| {CONTROLS[control]} | {MEASURES[m]} | {count['mieux']} ({significant[-1]}) | "
-                             f"{count['pire']} ({significant[1]}) | {count['équivalent'] if m == 'stress' else '–'} | "
-                             f"{count['indécis']} | {len(group)} |")
+        lines += ["", f"### {title}", ""] + count_lines(kept, "control", CONTROLS, "témoin", "écran mieux", "écran pire")
     lines += selection_lines(suffix)
     (OUT / f"results_resolution{suffix}.md").write_text("\n".join(lines) + "\n")
     figures(table, args.quick)
