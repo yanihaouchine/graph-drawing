@@ -57,6 +57,21 @@ def test_report_end_to_end(tmp_path):
             assert (tmp_path / f"{m}_{name}.png").stat().st_size > 10_000
 
 
+def test_selection_lines(tmp_path):
+    import json
+    script = load_script()
+    script.OUT = tmp_path
+    assert script.selection_lines() == []  # no selection file: no section
+    grid = [{"fraction": f, "lr": lr} for f in (0.3, 1.0, 3.0) for lr in (0.5, 1.0, 2.0)]
+    (tmp_path / "selection.json").write_text(json.dumps({
+        "100px_r2_w1": {"screen": {"fraction": 3.0, "lr": 1.0, "candidates": grid},
+                        "geometric": {"fraction": 1.0, "lr": 1.0, "candidates": grid}}}))
+    lines = script.selection_lines()
+    assert lines[3].startswith("1 choix sur 2 tombent sur une borne")
+    assert "| 100px_r2_w1 | écran | 3 | 1 | fraction : borne haute |" in lines
+    assert "| 100px_r2_w1 | géométrique | 1 | 1 | – |" in lines
+
+
 def test_verdict():
     script = load_script()
     test = {"p": 1e-12, "effect": -0.4, "same": None}

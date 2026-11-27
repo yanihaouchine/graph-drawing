@@ -143,6 +143,16 @@ def test_choose_respects_the_stress_budget():
     assert choose(cands, 0.5)[0] == {"a": 1}  # nothing within budget: the lowest stress
 
 
+def test_on_bound():
+    from resolution import on_bound
+    grid = [{"fraction": f, "lr": lr} for f in (0.1, 1.0, 3.0) for lr in (0.5, 1.0, 2.0)]
+    assert on_bound({"fraction": 1.0, "lr": 1.0, "candidates": grid}) == {}
+    assert on_bound({"fraction": 3.0, "lr": 1.0, "candidates": grid}) == {"fraction": "max"}
+    assert on_bound({"fraction": 0.1, "lr": 2.0, "candidates": grid}) == {"fraction": "min", "lr": "max"}
+    # a single value tried is not a grid: nothing to flag
+    assert on_bound({"fraction": 0.3, "lr": 1.0, "candidates": [{"fraction": 0.3, "lr": 1.0}]}) == {}
+
+
 def test_defect_score_share_weighs_each_defect_the_same():
     """A crowded drawing: one edge runs through many nodes. The pair count lets that edge outweigh the nodes;
     the share counts it once."""

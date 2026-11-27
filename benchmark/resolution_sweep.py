@@ -188,6 +188,31 @@ def verdict(test):
     return "indécis"
 
 
+def selection_lines(suffix=""):
+    """Report section on the refinements chosen on the validation graphs, from the selection*.json files
+    present: weight fraction and learning rate of each, and whether the choice sits on a bound of the grid."""
+    from resolution import on_bound
+
+    names = {"min": "borne basse", "max": "borne haute"}
+    rows, flagged = [], 0
+    for path in [OUT / f"selection{suffix}.json"] + [OUT / f"selection_{t}{suffix}.json" for t in EXTRA_ROWS]:
+        if not path.exists():
+            continue
+        for setting, kinds in json.loads(path.read_text()).items():
+            for kind, chosen in kinds.items():
+                bounds = on_bound(chosen)
+                flagged += bool(bounds)
+                where = ", ".join(f"{'fraction' if k == 'fraction' else 'pas'} : {names[v]}" for k, v in bounds.items())
+                rows.append(f"| {setting} | {CONTROLS.get(kind, 'écran' if kind == 'screen' else kind)} | "
+                            f"{chosen['fraction']:g} | {chosen['lr']:g} | {where or '–'} |")
+    if not rows:
+        return []
+    return ["", "## Affinages choisis sur la validation", "",
+            f"{flagged} choix sur {len(rows)} tombent sur une borne de la grille essayée : la meilleure valeur peut "
+            "se trouver au-delà, et le résultat dépend alors de la grille.", "",
+            "| réglage | affinage | fraction des poids | pas | sur une borne |", "|---|---|---|---|---|"] + rows
+
+
 def report(args):
     from stats import bootstrap_ci, equivalence_test, holm, paired_difference_ci, paired_test, rank_biserial
 
@@ -265,6 +290,7 @@ def report(args):
             lines.append(f"| {CONTROLS[control]} | {MEASURES[m]} | {count['mieux']} ({significant[-1]}) | "
                          f"{count['pire']} ({significant[1]}) | {count['équivalent'] if m == 'stress' else '–'} | "
                          f"{count['indécis']} | {len(group)} |")
+    lines += selection_lines(suffix)
     (OUT / f"results_resolution{suffix}.md").write_text("\n".join(lines) + "\n")
     figures(table, args.quick)
     print("\n".join(lines[:40]))

@@ -234,6 +234,18 @@ def choose(candidates, start_stress, score="share"):
     return min(candidates, key=lambda c: c[1]["stress"])
 
 
+def on_bound(chosen):
+    """Parameters of a selection (selection[kind] of sweep_setting) chosen at an end of the grid tried:
+    {"fraction": "max", "lr": "min", ...}, empty if the choice is inside the grid. A choice on a bound says the
+    best value may lie beyond it: the grid, not the method, set the result."""
+    bounds = {}
+    for name in ("fraction", "lr"):
+        tried = sorted({c[name] for c in chosen["candidates"]})
+        if len(tried) > 1 and chosen[name] in (tried[0], tried[-1]):
+            bounds[name] = "min" if chosen[name] == tried[0] else "max"
+    return bounds
+
+
 def sweep_setting(size, radius, width, val, test, refined_starts, device="cpu", pool=None,
                   fractions=FRACTIONS, learning_rates=LEARNING_RATES, steps=STEPS, batch_size=64,
                   kinds=KINDS, measure_starts=True, score="share"):
