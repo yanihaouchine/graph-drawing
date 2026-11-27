@@ -117,6 +117,16 @@ def test_edge_through_a_node_is_ambiguous(make_graph):
     assert away["ambiguous_edges"] == 0
 
 
+def test_ambiguous_edge_share_counts_each_edge_once(make_graph):
+    # edge 0-1 runs through nodes 2 and 3; edge 4-5 touches nothing
+    g = make_graph([(0, 1), (4, 5)], n=6, node_size=3.0)
+    q = image_quality(P([10, 40], [70, 40], [30, 40], [50, 40], [10, 70], [70, 70]), g, W, H)
+    assert q["ambiguous_edges"] == pytest.approx(2 / 2)  # two (edge, node) pairs for two edges
+    assert q["ambiguous_edge_share"] == pytest.approx(1 / 2)  # one edge out of two is ambiguous
+    clean = image_quality(P([10, 40], [70, 40], [30, 20], [50, 20], [10, 70], [70, 70]), g, W, H)
+    assert clean["ambiguous_edges"] == clean["ambiguous_edge_share"] == 0
+
+
 def test_edge_ends_are_not_ambiguous(make_graph):
     g = make_graph([(0, 1), (1, 2)], node_size=4.0)
     q = image_quality(P([10, 10], [40, 40], [70, 10]), g, W, H)

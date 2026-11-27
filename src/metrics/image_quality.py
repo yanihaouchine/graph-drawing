@@ -20,7 +20,8 @@ Measures (image_quality returns them in a dict):
 - merged_nodes: nodes that touch another node once rasterized: number of nodes minus number of connected
   blobs of node ink (pixels at least half inked, 8-connectivity), divided by the number of nodes.
 - ambiguous_edges: pairs (edge, node that is not one of its ends) sharing a pixel (both coverages above
-  `threshold`), divided by the number of edges: an edge that seems connected to a node.
+  `threshold`), divided by the number of edges: an edge that seems connected to a node. Not bounded: an edge
+  counts once per node it touches. ambiguous_edge_share: share of the edges in at least one such pair, in [0, 1].
 - edge_overlap: share of the edge ink, outside the nodes, covered by two edges or more.
 - ink_density: share of the frame covered by ink; ink_peak: densest 16 x 16 window.
 """
@@ -209,6 +210,7 @@ def image_quality(positions, graph, width, height, edges=None, threshold=0.1, wi
         "hidden_nodes": float((visible < 0.5).mean()) if n else 0.0,
         "merged_nodes": merged / max(n, 1),
         "ambiguous_edges": len(a["ambiguous_pairs"]) / max(m, 1),
+        "ambiguous_edge_share": len(np.unique(a["ambiguous_pairs"][:, 0])) / max(m, 1) if len(a["ambiguous_pairs"]) else 0.0,
         "edge_overlap": float(a["edge_shared"].sum() / max(a["edge_ink"].sum(), 1)),
         "ink_density": float(all_ink.mean()),
         "ink_peak": float(local.max()),
@@ -234,5 +236,5 @@ def defect_mask(positions, graph, width, height, edges=None, threshold=0.1):
 
 IMAGE_MEASURES = {  # name: True if higher is better, None if descriptive (no better direction)
     "node_visibility": True, "hidden_nodes": False, "merged_nodes": False, "ambiguous_edges": False,
-    "edge_overlap": False, "ink_density": None, "ink_peak": False,
+    "ambiguous_edge_share": False, "edge_overlap": False, "ink_density": None, "ink_peak": False,
 }
