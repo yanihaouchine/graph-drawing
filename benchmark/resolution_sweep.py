@@ -168,8 +168,26 @@ def by_setting(rows):
     return table
 
 
+COMPARED = ("hidden_nodes", "merged_nodes", "ambiguous_edges", "stress")  # measures of the paired tests
+MIN_EFFECT = 0.1      # smallest |rank-biserial| counted as a difference (conventional "small" effect)
+STRESS_MARGIN = 0.01  # the screen's stress is "equivalent" within this share of the control's mean stress
+VERDICTS = ("mieux", "pire", "équivalent", "indécis")
+
+
+def verdict(test):
+    """Reading of one paired test (p-values already Holm-adjusted). Equivalent when the equivalence test says
+    the difference stays within the margin (stress only), even if it is consistent enough to be significant:
+    a difference under the margin is one we chose not to care about. Else better or worse when the difference
+    is significant and at least a small effect. Else undecided."""
+    if test["same"] is not None and test["same"] < 0.05:
+        return "équivalent"
+    if test["p"] < 0.05 and abs(test["effect"]) >= MIN_EFFECT:
+        return "mieux" if test["effect"] < 0 else "pire"
+    return "indécis"
+
+
 def report(args):
-    from stats import bootstrap_ci, holm, paired_test
+    from stats import bootstrap_ci, equivalence_test, holm, paired_difference_ci, paired_test, rank_biserial
 
     suffix = "_quick" if args.quick else ""
     paths = [OUT / f"rows{suffix}.csv"] + [p for p in (OUT / f"rows_{t}{suffix}.csv" for t in EXTRA_ROWS) if p.exists()]
@@ -198,20 +216,51 @@ def report(args):
             for control in CONTROLS:
                 if f"{start}+{control}" not in methods:
                     continue
-                for m in ("hidden_nodes", "merged_nodes", "ambiguous_edges", "stress"):
+                for m in COMPARED:
                     a = [r[m] for r in methods[f"{start}+screen"]]
                     b = [r[m] for r in methods[f"{start}+{control}"]]
                     diff, p = paired_test(a, b)
-                    tests.append((setting, start, control, m, diff, p))
-    adjusted = holm([t[5] for t in tests])
+                    _, lo, hi = paired_difference_ci(a, b)
+                    # stress: is the screen within STRESS_MARGIN of the control? (a test of difference cannot say)
+                    same = equivalence_test(a, b, STRESS_MARGIN * float(np.mean(b))) if m == "stress" else None
+                    tests.append({"setting": setting, "start": start, "control": control, "measure": m, "diff": diff,
+                                  "low": lo, "high": hi, "effect": rank_biserial(a, b), "p": p, "same": same})
+    for t, p in zip(tests, holm([t["p"] for t in tests])):
+        t["p"] = p
+    stress_tests = [t for t in tests if t["same"] is not None]
+    for t, p in zip(stress_tests, holm([t["same"] for t in stress_tests])):
+        t["same"] = p
     lines += ["## Écran contre les témoins géométriques", "",
-              "Différence moyenne écran − témoin, appariée par graphe (négatif : l'écran fait mieux sur ces "
-              f"mesures, toutes à minimiser). Wilcoxon signé, p corrigé par Holm sur les {len(tests)} tests.", "",
-              "| s | r | w | départ | témoin | mesure | écran − témoin | p (Holm) |", "|---|---|---|---|---|---|---|---|"]
-    for (setting, start, control, m, diff, _), p in zip(tests, adjusted):
-        mark = " *" if p < 0.05 else ""
-        lines.append(f"| {setting[0]:g} | {setting[1]:g} | {setting[2]:g} | {start} | {CONTROLS[control]} | "
-                     f"{MEASURES[m]} | {diff:+.4f} | {p:.2g}{mark} |")
+              "Différence moyenne écran − témoin, appariée par graphe [IC à 95 % par bootstrap] (négatif : l'écran "
+              "fait mieux sur ces mesures, toutes à minimiser). r : corrélation bisériale de rangs appariée, "
+              "taille d'effet dans [−1, 1] qui ne grandit pas avec le nombre de graphes (0,1 faible, 0,3 moyen, "
+              f"0,5 fort). Wilcoxon signé, p corrigé par Holm sur les {len(tests)} tests. Verdict : pour le stress, "
+              f"« équivalent » si le test d'équivalence (TOST, marge de {STRESS_MARGIN:.0%} du stress du témoin, "
+              f"Holm sur les {len(stress_tests)} tests) donne p < 0,05, même quand l'écart est assez régulier "
+              f"pour être significatif ; sinon « mieux » ou « pire » si p < 0,05 et |r| ≥ {MIN_EFFECT:g} ; sinon "
+              "« indécis ».", "",
+              "| s | r | w | départ | témoin | mesure | écran − témoin | r | p (Holm) | verdict |",
+              "|---|---|---|---|---|---|---|---|---|---|"]
+    for t in tests:
+        s_, r_, w_ = t["setting"]
+        t["verdict"] = verdict(t)
+        lines.append(f"| {s_:g} | {r_:g} | {w_:g} | {t['start']} | {CONTROLS[t['control']]} | "
+                     f"{MEASURES[t['measure']]} | {t['diff']:+.4f} [{t['low']:+.4f}, {t['high']:+.4f}] | "
+                     f"{t['effect']:+.2f} | {t['p']:.2g}{' *' if t['p'] < 0.05 else ''} | {t['verdict']} |")
+    lines += ["", "## Décompte des verdicts", "",
+              "Nombre de (réglage, départ) par verdict ; entre parenthèses, le nombre de différences "
+              "significatives (p < 0,05) quelle que soit leur taille.", "",
+              "| témoin | mesure | écran mieux | écran pire | équivalent | indécis | total |", "|---|---|---|---|---|---|---|"]
+    for control in CONTROLS:
+        for m in COMPARED:
+            group = [t for t in tests if t["control"] == control and t["measure"] == m]
+            if not group:
+                continue
+            count = {v: sum(t["verdict"] == v for t in group) for v in VERDICTS}
+            significant = {sign: sum(t["p"] < 0.05 and np.sign(t["diff"]) == sign for t in group) for sign in (-1, 1)}
+            lines.append(f"| {CONTROLS[control]} | {MEASURES[m]} | {count['mieux']} ({significant[-1]}) | "
+                         f"{count['pire']} ({significant[1]}) | {count['équivalent'] if m == 'stress' else '–'} | "
+                         f"{count['indécis']} | {len(group)} |")
     (OUT / f"results_resolution{suffix}.md").write_text("\n".join(lines) + "\n")
     figures(table, args.quick)
     print("\n".join(lines[:40]))
