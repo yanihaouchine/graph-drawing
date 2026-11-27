@@ -79,6 +79,10 @@ def run(args):
             val = refined_drawings(val_starts, val_graphs, size, radius, width, chosen, device)
             test = refined_drawings(test_starts, test_graphs, size, radius, width, chosen, device)
             kwargs = dict(fractions=(1.0,), learning_rates=(1.0,), steps=20) if args.quick else {}
+            if args.fractions:
+                kwargs["fractions"] = tuple(float(x) for x in args.fractions.split(","))
+            if args.rates:
+                kwargs["learning_rates"] = tuple(float(x) for x in args.rates.split(","))
             rows, chosen_curves, offsets = curves_setting(size, val, test, device, pool, **kwargs)
             selection[key] = chosen_curves
             torch.save({"positions": [p for p, _ in test], "offsets": offsets, "names": [g.name for g in test_graphs]},
@@ -224,6 +228,8 @@ if __name__ == "__main__":
     p_run.add_argument("--workers", type=int, default=max(1, multiprocessing.cpu_count() - 4))
     p_run.add_argument("--settings", default="all", choices=sorted(SETTINGS),
                        help="all: the 16 settings of the resolution sweep; hard: the three of the first experiment")
+    p_run.add_argument("--fractions", default="", help="weight fractions tried, comma separated (curves.experiment.FRACTIONS)")
+    p_run.add_argument("--rates", default="", help="learning rates tried, comma separated (curves.experiment.LEARNING_RATES)")
     p_run.add_argument("--quick", action="store_true")
     p_rep = sub.add_parser("report")
     p_rep.add_argument("--quick", action="store_true")

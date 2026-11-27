@@ -15,8 +15,10 @@ from curves.render import curve_elements
 from data.output import Layout
 from metrics.image_quality import image_quality
 
-FRACTIONS = (0.1, 0.3, 1.0, 3.0)
-LEARNING_RATES = (0.5, 1.0, 2.0)
+# Wide on purpose (see resolution.on_bound): with fractions up to 3 and rates up to 2, the three choices of the
+# first experiment were on the upper bound of both. Crossings stop large weights (CROSSING_TOLERANCE), not the grid.
+FRACTIONS = (0.1, 0.3, 1.0, 3.0, 10.0, 30.0)
+LEARNING_RATES = (0.5, 1.0, 2.0, 4.0, 8.0)
 STEPS = 50
 CROSSING_TOLERANCE = 1.05
 
