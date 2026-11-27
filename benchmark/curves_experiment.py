@@ -1,14 +1,18 @@
-"""Curved vs straight edges on hard settings: from the drawing of our model refined in screen space at the
+"""Curved vs straight edges on every setting of the resolution sweep: from the drawing of our model refined in screen space at the
 setting (the refinement chosen by benchmark/resolution_sweep.py), the nodes stay where they are and only the
 edges change, straight or bent in screen space (src/curves). Measures on the rendered image.
 
-    python benchmark/curves_experiment.py run runs/model.pt [--workers 48] [--quick]
+    python benchmark/curves_experiment.py run runs/model.pt [--workers 48] [--settings all|hard] [--quick]
     python benchmark/curves_experiment.py report
 
 Needs benchmark/out/positions.pt (compare.py) and benchmark/out/resolution/{selection.json, val_starts.pt}
 (resolution_sweep.py run). Writes benchmark/out/curves/: rows.csv, selection.json, results_curves.md (means with
 95 % bootstrap intervals, paired Wilcoxon tests curved vs straight with Holm correction) and sheet.png
 (three test graphs, straight and curved, defects of the image in red).
+
+--settings hard runs only the three settings of the first experiment, which were picked because straight edges
+hit nodes most there; the default runs the 16 settings of the sweep, so that the result does not rest on that
+choice.
 """
 import argparse
 import csv
@@ -26,7 +30,11 @@ import torch  # noqa: E402
 OUT = HERE / "out" / "curves"
 SWEEP = HERE / "out" / "resolution"
 DATA = HERE.parent / "data" / "rome"
-SETTINGS = [(200, 4.0, 1.0), (200, 4.0, 3.0), (300, 8.0, 1.0)]  # where straight edges hit nodes most
+HARD = [(200, 4.0, 1.0), (200, 4.0, 3.0), (300, 8.0, 1.0)]  # where straight edges hit nodes most: the first experiment
+SETTINGS = {"hard": HARD,  # "all": the settings of benchmark/resolution_sweep.py
+            "all": sorted([(s, r, 1.0) for s in (100, 150, 200, 300, 500) for r in (2.0, 4.0, 8.0)] + [(200, 4.0, 3.0)])}
+COMPARED = ("ambiguous_edges", "edge_overlap", "crossings")  # measures of the paired tests, all to minimise
+MIN_EFFECT = 0.1  # smallest |rank-biserial| counted as a difference, as in the sweep report
 MEASURES = {"ambiguous_edges": "Arêtes ambiguës / arête", "edge_overlap": "Arêtes confondues",
             "crossings": "Croisements", "hidden_nodes": "Nœuds cachés", "ink_peak": "Encre (pic)", "bend": "Courbure"}
 
@@ -56,9 +64,9 @@ def run(args):
     test_starts = [positions[g.name] for g in test_graphs]
     val_starts = val_saved["starts"]["ours"]
     selection_sweep = json.loads((SWEEP / "selection.json").read_text())
-    settings = SETTINGS
+    settings = SETTINGS[args.settings]
     if args.quick:
-        settings, val_graphs, val_starts = SETTINGS[:1], val_graphs[:20], val_starts[:20]
+        settings, val_graphs, val_starts = HARD[:1], val_graphs[:20], val_starts[:20]
         test_graphs, test_starts = test_graphs[:20], test_starts[:20]
 
     rows_path = OUT / ("rows_quick.csv" if args.quick else "rows.csv")
@@ -88,7 +96,8 @@ def run(args):
 
 
 def report(args):
-    from stats import bootstrap_ci, holm, paired_test
+    from resolution import on_bound
+    from stats import bootstrap_ci, holm, paired_difference_ci, paired_test, rank_biserial
     suffix = "_quick" if args.quick else ""
     with open(OUT / f"rows{suffix}.csv", newline="") as f:
         rows = [{k: (v if k == "edges" else float(v)) for k, v in r.items()} for r in csv.DictReader(f)]
@@ -111,15 +120,46 @@ def report(args):
                 cells.append(f"{mean:.3f} [{lo:.3f}, {hi:.3f}]")
             lines.append(f"| {'droites' if kind == 'straight' else 'courbes'} | " + " | ".join(cells) + " |")
         lines.append("")
-        for m in ("ambiguous_edges", "edge_overlap", "crossings"):
-            diff, p = paired_test([r[m] for r in by_edges["curved"]], [r[m] for r in by_edges["straight"]])
-            tests.append((setting, m, diff, p))
-    adjusted = holm([t[3] for t in tests])
+        for m in COMPARED:
+            curved, straight = [r[m] for r in by_edges["curved"]], [r[m] for r in by_edges["straight"]]
+            diff, p = paired_test(curved, straight)
+            _, lo, hi = paired_difference_ci(curved, straight)
+            tests.append({"setting": setting, "measure": m, "diff": diff, "low": lo, "high": hi,
+                          "effect": rank_biserial(curved, straight), "p": p})
+    for t, p in zip(tests, holm([t["p"] for t in tests])):
+        t["p"] = p
+        different = p < 0.05 and abs(t["effect"]) >= MIN_EFFECT
+        t["verdict"] = ("mieux" if t["effect"] < 0 else "pire") if different else "indécis"
     lines += ["## Courbes − droites, apparié par graphe", "",
-              f"Wilcoxon signé, p corrigé par Holm sur les {len(tests)} tests (négatif : les courbes font mieux).", "",
-              "| s | r | w | mesure | courbes − droites | p (Holm) |", "|---|---|---|---|---|---|"]
-    for (setting, m, diff, _), p in zip(tests, adjusted):
-        lines.append(f"| {setting[0]:g} | {setting[1]:g} | {setting[2]:g} | {MEASURES[m]} | {diff:+.4f} | {p:.2g}{' *' if p < 0.05 else ''} |")
+              f"Différence moyenne [IC à 95 %] (négatif : les courbes font mieux). r : corrélation bisériale de "
+              f"rangs appariée. Wilcoxon signé, p corrigé par Holm sur les {len(tests)} tests. Verdict : « mieux » "
+              f"ou « pire » si p < 0,05 et |r| ≥ {MIN_EFFECT:g}.", "",
+              "| s | r | w | mesure | courbes − droites | r | p (Holm) | verdict |", "|---|---|---|---|---|---|---|---|"]
+    for t in tests:
+        s_, r_, w_ = t["setting"]
+        lines.append(f"| {s_:g} | {r_:g} | {w_:g} | {MEASURES[t['measure']]} | {t['diff']:+.4f} "
+                     f"[{t['low']:+.4f}, {t['high']:+.4f}] | {t['effect']:+.2f} | {t['p']:.2g}{' *' if t['p'] < 0.05 else ''} "
+                     f"| {t['verdict']} |")
+    hard = {tuple(map(float, h)) for h in HARD}
+    lines += ["", "## Décompte des verdicts", "",
+              "Nombre de réglages par verdict, sur tous les réglages mesurés puis sur les trois de la première "
+              "expérience (choisis parce que les arêtes droites y touchent le plus de nœuds).", "",
+              "| réglages | mesure | courbes mieux | courbes pire | indécis | total |", "|---|---|---|---|---|---|"]
+    for title, kept in (("tous", tests), ("les trois premiers", [t for t in tests if t["setting"] in hard])):
+        for m in COMPARED:
+            group = [t["verdict"] for t in kept if t["measure"] == m]
+            if group:
+                lines.append(f"| {title} | {MEASURES[m]} | {group.count('mieux')} | {group.count('pire')} | "
+                             f"{group.count('indécis')} | {len(group)} |")
+    selection_path = OUT / f"selection{suffix}.json"
+    if selection_path.exists():
+        selection = json.loads(selection_path.read_text())
+        bounds = {key: on_bound(chosen) for key, chosen in selection.items()}
+        lines += ["", "## Courbes choisies sur la validation", "",
+                  f"{sum(map(bool, bounds.values()))} choix sur {len(bounds)} tombent sur une borne de la grille essayée.", "",
+                  "| réglage | fraction des poids | pas | sur une borne |", "|---|---|---|---|"]
+        lines += [f"| {key} | {chosen['fraction']:g} | {chosen['lr']:g} | {', '.join(bounds[key]) or '–'} |"
+                  for key, chosen in selection.items()]
     (OUT / f"results_curves{suffix}.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
     sheet(suffix)
@@ -142,7 +182,7 @@ def sheet(suffix=""):
     from data.raster import raster
     from resolution import with_style
 
-    size, radius, width = SETTINGS[0]
+    size, radius, width = HARD[0]
     key = f"{size}px_r{radius:g}_w{width:g}"
     path = OUT / f"drawings_{key}{suffix}.pt"
     if not path.exists():
@@ -182,6 +222,8 @@ if __name__ == "__main__":
     p_run = sub.add_parser("run")
     p_run.add_argument("checkpoint")
     p_run.add_argument("--workers", type=int, default=max(1, multiprocessing.cpu_count() - 4))
+    p_run.add_argument("--settings", default="all", choices=sorted(SETTINGS),
+                       help="all: the 16 settings of the resolution sweep; hard: the three of the first experiment")
     p_run.add_argument("--quick", action="store_true")
     p_rep = sub.add_parser("report")
     p_rep.add_argument("--quick", action="store_true")
