@@ -196,8 +196,12 @@ def mean_measures(rows):
 # -----------------------------------------------------------------------------------------------------------
 # One setting of the sweep: choose the refinement on the validation graphs, run it on the test graphs
 # -----------------------------------------------------------------------------------------------------------
-FRACTIONS = (0.03, 0.1, 0.3, 1.0, 3.0)  # weight of each term, as a fraction of its balanced weight (0.03: the team's)
-LEARNING_RATES = (0.25, 0.5, 1.0, 2.0)  # pixels per step, roughly (1.0: the team's)
+# Weight of each term, as a fraction of its balanced weight (0.03: the team's), and learning rate in pixels per
+# step, roughly (1.0: the team's). Wide on purpose: a choice at an end of a grid is a choice the grid made
+# (on_bound). The first sweep stopped at fraction 3 and rates 0.25 to 2, and 63 of its 64 choices were on a
+# bound. The stress budget of `choose` is what stops large weights, not the grid.
+FRACTIONS = (0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0)
+LEARNING_RATES = (0.125, 0.25, 0.5, 1.0, 2.0, 4.0)
 STEPS = 25  # the team's refinement budget (refine.STEPS), the same for every method and setting
 STRESS_TOLERANCE = 1.05  # a refinement may cost at most 5 % of stress (the team's rule for PHASE_2_WEIGHTS)
 

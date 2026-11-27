@@ -93,6 +93,10 @@ def run(args):
     val = {m: list(zip(val_start[m], val_graphs)) for m in REFINED}
 
     settings, fractions, rates, steps = SETTINGS, FRACTIONS, LEARNING_RATES, STEPS
+    if args.fractions:
+        fractions = tuple(float(x) for x in args.fractions.split(","))
+    if args.rates:
+        rates = tuple(float(x) for x in args.rates.split(","))
     if args.quick:  # a few minutes: checks the whole chain
         settings, fractions, rates = [(150, 4.0, 1.0), (500, 4.0, 1.0)], (0.1,), (1.0,)
         test = {m: d[:20] for m, d in test.items()}
@@ -364,6 +368,8 @@ if __name__ == "__main__":
     p_run.add_argument("--quick", action="store_true")
     p_run.add_argument("--kinds", default="screen,geometric", help="refinement kinds (resolution.TERMS)")
     p_run.add_argument("--only-refined", action="store_true", help="do not measure the starting drawings again")
+    p_run.add_argument("--fractions", default="", help="weight fractions tried, comma separated (resolution.FRACTIONS)")
+    p_run.add_argument("--rates", default="", help="learning rates tried, comma separated (resolution.LEARNING_RATES)")
     p_run.add_argument("--score", default="share", choices=("share", "pairs"),
                        help="defect score of the selection (resolution.SCORES); pairs: the rule of the first sweep")
     p_run.add_argument("--tag", default="", help="suffix of the output files (rows_TAG.csv, selection_TAG.json)")
