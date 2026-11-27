@@ -130,16 +130,33 @@ def test_scale_normalized_stress_is_scale_free(make_graph):
 def test_evaluate_has_every_measure(make_graph):
     g = with_style(make_graph(GRID), 2.0, 1.0)
     m = evaluate(rescale_to_frame(torch.rand(16, 2), 100, 2), g, 100)
-    assert {"stress", "crossings", "hidden_nodes", "merged_nodes", "ambiguous_edges"} <= set(m)
+    assert {"stress", "crossings", "hidden_nodes", "merged_nodes", "ambiguous_edges", "ambiguous_edge_share"} <= set(m)
 
 
 def test_choose_respects_the_stress_budget():
-    cands = [({"a": 1}, {"stress": 1.00, "hidden_nodes": .5, "merged_nodes": 0, "ambiguous_edges": 0}),
-             ({"a": 2}, {"stress": 1.04, "hidden_nodes": .1, "merged_nodes": 0, "ambiguous_edges": 0}),
-             ({"a": 3}, {"stress": 1.30, "hidden_nodes": .0, "merged_nodes": 0, "ambiguous_edges": 0})]
+    clean = {"merged_nodes": 0, "ambiguous_edges": 0, "ambiguous_edge_share": 0}
+    cands = [({"a": 1}, {"stress": 1.00, "hidden_nodes": .5, **clean}),
+             ({"a": 2}, {"stress": 1.04, "hidden_nodes": .1, **clean}),
+             ({"a": 3}, {"stress": 1.30, "hidden_nodes": .0, **clean})]
     from resolution import choose
     assert choose(cands, 1.0)[0] == {"a": 2}  # the best within +5 % of stress
     assert choose(cands, 0.5)[0] == {"a": 1}  # nothing within budget: the lowest stress
+
+
+def test_defect_score_share_weighs_each_defect_the_same():
+    """A crowded drawing: one edge runs through many nodes. The pair count lets that edge outweigh the nodes;
+    the share counts it once."""
+    from resolution import choose
+    # a: half the nodes merged, edges clean. b: nodes clean, 1 edge in 10 ambiguous, through 8 nodes each
+    a = {"stress": 1.0, "hidden_nodes": 0, "merged_nodes": 0.5, "ambiguous_edges": 0.0, "ambiguous_edge_share": 0.0}
+    b = {"stress": 1.0, "hidden_nodes": 0, "merged_nodes": 0.0, "ambiguous_edges": 0.8, "ambiguous_edge_share": 0.1}
+    assert defect_score(a) == 0.5 and defect_score(b) == pytest.approx(0.1)
+    assert defect_score(b, "pairs") == pytest.approx(0.8)
+    cands = [({"x": "a"}, a), ({"x": "b"}, b)]
+    assert choose(cands, 1.0)[0] == {"x": "b"}  # default: the share
+    assert choose(cands, 1.0, score="pairs")[0] == {"x": "a"}  # the first rule
+    with pytest.raises(KeyError):
+        defect_score(a, "unknown")
 
 
 def test_sweep_setting_end_to_end(make_graph):
@@ -159,6 +176,7 @@ def test_sweep_setting_end_to_end(make_graph):
     for kind in ("screen", "geometric"):
         assert selection[kind]["lr"] in (0.5, 1.0) and len(selection[kind]["candidates"]) == 2
         assert selection[kind]["weights"]["stress"] == 1.0
+        assert selection[kind]["score"] == "share"  # the rule that chose is written next to the choice
 
 
 def test_evaluate_all_in_a_process_pool_matches_serial(make_graph):

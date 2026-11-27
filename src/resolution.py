@@ -174,10 +174,18 @@ def evaluate(positions, graph, size):
     return measures
 
 
-def defect_score(measures):
-    """Selection criterion of the sweep (declared before looking at the test): hidden + merged nodes +
-    ambiguous edges, the three defects that a reader cannot repair by looking closer."""
-    return measures["hidden_nodes"] + measures["merged_nodes"] + measures["ambiguous_edges"]
+SCORES = {  # name: the measures summed by defect_score
+    # three shares in [0, 1] of the elements a reader gets wrong: each defect weighs the same
+    "share": ("hidden_nodes", "merged_nodes", "ambiguous_edge_share"),
+    # the first rule of the sweep: the third term counts (edge, node) pairs per edge and is not bounded
+    "pairs": ("hidden_nodes", "merged_nodes", "ambiguous_edges"),
+}
+
+
+def defect_score(measures, score="share"):
+    """Selection criterion of the sweep: hidden nodes + merged nodes + ambiguous edges, the three defects that
+    a reader cannot repair by looking closer. `score` names the measures summed (SCORES)."""
+    return sum(measures[m] for m in SCORES[score])
 
 
 def mean_measures(rows):
@@ -216,27 +224,27 @@ def evaluate_all(jobs, size, pool=None):
     return list(pool.starmap(evaluate, args, chunksize=max(1, len(args) // (4 * pool._processes))))
 
 
-def choose(candidates, start_stress):
-    """The selection rule, declared before looking at the test: among the candidates whose mean stress is at
-    most STRESS_TOLERANCE x the stress of the starting drawings, the lowest mean defect score; if none is,
-    the lowest stress. candidates: list of (params, mean measures)."""
+def choose(candidates, start_stress, score="share"):
+    """The selection rule, applied to the validation graphs only: among the candidates whose mean stress is at
+    most STRESS_TOLERANCE x the stress of the starting drawings, the lowest mean defect score (`score`, see
+    SCORES); if none is, the lowest stress. candidates: list of (params, mean measures)."""
     allowed = [c for c in candidates if c[1]["stress"] <= STRESS_TOLERANCE * start_stress]
     if allowed:
-        return min(allowed, key=lambda c: defect_score(c[1]))
+        return min(allowed, key=lambda c: defect_score(c[1], score))
     return min(candidates, key=lambda c: c[1]["stress"])
 
 
 def sweep_setting(size, radius, width, val, test, refined_starts, device="cpu", pool=None,
                   fractions=FRACTIONS, learning_rates=LEARNING_RATES, steps=STEPS, batch_size=64,
-                  kinds=KINDS, measure_starts=True):
+                  kinds=KINDS, measure_starts=True, score="share"):
     """One setting (image size, node radius, edge width) of the sweep.
 
     val, test: {method: [(positions, graph), ...]} starting drawings in ANY frame (rescaled here), graphs with
     any style (restyled here). The same graphs, in the same order, for every method. refined_starts: methods
     of `val` / `test` to refine (e.g. ["kk", "ours"]); val needs only those.
     For each kind of `kinds` ("screen", "geometric", ...): balanced weights from the validation starting drawings, then every
-    (fraction, learning rate) is tried on the validation set and one is chosen by `choose`, the same way for
-    both kinds. Then every method of `test` is measured as it is, and each refined start with each kind.
+    (fraction, learning rate) is tried on the validation set and one is chosen by `choose` with the defect score
+    `score`, the same way for both kinds. Then every method of `test` is measured as it is, and each refined start with each kind.
 
     Returns (rows, selection): one row per test drawing {method, graph index, measures...};
     selection[kind] = chosen parameters, weights and the validation scores of every candidate.
@@ -260,9 +268,9 @@ def sweep_setting(size, radius, width, val, test, refined_starts, device="cpu", 
                                steps, lr, radius, device, batch_size)
                 scores = mean_measures(evaluate_all(list(zip(P, [g for _, g in val_starts])), size, pool))
                 candidates.append(({"fraction": fraction, "lr": lr}, scores))
-        params, scores = choose(candidates, start_stress)
+        params, scores = choose(candidates, start_stress, score)
         selection[kind] = {**params, "weights": balanced_weights(means, params["fraction"]), "val": scores,
-                           "start_stress": start_stress,
+                           "start_stress": start_stress, "score": score,
                            "candidates": [{**p, **s} for p, s in candidates]}
 
     rows = []

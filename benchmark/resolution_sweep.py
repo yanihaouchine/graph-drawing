@@ -108,7 +108,8 @@ def run(args):
         for size, radius, width in settings:
             t = time.perf_counter()
             rows, chosen = sweep_setting(size, radius, width, val, test, REFINED, device, pool,
-                                         fractions, rates, steps, kinds=kinds, measure_starts=not args.only_refined)
+                                         fractions, rates, steps, kinds=kinds, measure_starts=not args.only_refined,
+                                         score=args.score)
             key = f"{size}px_r{radius:g}_w{width:g}"
             selection[key] = chosen
             for row in rows:
@@ -138,7 +139,8 @@ CONTROLS = {"geometric": "géométrique", "geometric_m1": "géométrique, marge 
             "geometric_m2": "géométrique, marge 2 px"}
 EXTRA_ROWS = ("margin",)  # tags of extra runs (--tag) merged into the report when present
 MEASURES = {"hidden_nodes": "Nœuds cachés", "merged_nodes": "Nœuds fusionnés",
-            "ambiguous_edges": "Arêtes ambiguës / arête", "edge_overlap": "Arêtes confondues",
+            "ambiguous_edges": "Arêtes ambiguës / arête",
+            "ambiguous_edge_share": "Arêtes ambiguës (part)", "edge_overlap": "Arêtes confondues",
             "node_visibility": "Visibilité des nœuds", "stress": "Stress", "crossings": "Croisements"}
 # Figures: categorical slots of the dataviz reference palette, in its validated order; each method keeps its
 # color in every figure. Markers differ too: identity never rests on color alone.
@@ -197,13 +199,15 @@ def report(args):
              "image s × s. Flèche : sens du mieux.", ""]
     arrows = {"node_visibility": "↑"}
     for (size, radius, width), methods in sorted(table.items()):
+        # rows written before a measure existed do not have it: show the measures every method has
+        shown = [m for m in MEASURES if all(m in drawings[0] for drawings in methods.values())]
         lines += [f"## s = {size:g} px, r = {radius:g} px, w = {width:g} px", "",
-                  "| méthode | " + " | ".join(f"{MEASURES[m]} {arrows.get(m, '↓')}" for m in MEASURES) + " |",
-                  "|---|" + "---|" * len(MEASURES)]
+                  "| méthode | " + " | ".join(f"{MEASURES[m]} {arrows.get(m, '↓')}" for m in shown) + " |",
+                  "|---|" + "---|" * len(shown)]
         for method in LABELS:
             if method in methods:
                 cells = []
-                for m in MEASURES:
+                for m in shown:
                     mean, lo, hi = bootstrap_ci([r[m] for r in methods[method]])
                     cells.append(f"{mean:.3f} [{lo:.3f}, {hi:.3f}]" if m != "crossings" else f"{mean:.1f} [{lo:.1f}, {hi:.1f}]")
                 lines.append(f"| {LABELS[method]} | " + " | ".join(cells) + " |")
@@ -334,6 +338,8 @@ if __name__ == "__main__":
     p_run.add_argument("--quick", action="store_true")
     p_run.add_argument("--kinds", default="screen,geometric", help="refinement kinds (resolution.TERMS)")
     p_run.add_argument("--only-refined", action="store_true", help="do not measure the starting drawings again")
+    p_run.add_argument("--score", default="share", choices=("share", "pairs"),
+                       help="defect score of the selection (resolution.SCORES); pairs: the rule of the first sweep")
     p_run.add_argument("--tag", default="", help="suffix of the output files (rows_TAG.csv, selection_TAG.json)")
     p_rep = sub.add_parser("report")
     p_rep.add_argument("--quick", action="store_true")
