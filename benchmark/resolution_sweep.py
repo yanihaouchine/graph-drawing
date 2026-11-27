@@ -178,6 +178,13 @@ COMPARED = ("hidden_nodes", "merged_nodes", "ambiguous_edges", "stress")  # meas
 MIN_EFFECT = 0.1      # smallest |rank-biserial| counted as a difference (conventional "small" effect)
 STRESS_MARGIN = 0.01  # the screen's stress is "equivalent" within this share of the control's mean stress
 VERDICTS = ("mieux", "pire", "équivalent", "indécis")
+SATURATED = 0.5       # a setting where every method merges more than this share of the nodes is saturated
+
+
+def saturated(methods):
+    """True when no method of this setting keeps the merged nodes under SATURATED: the image is too small for
+    the nodes whatever the drawing, and the setting compares nothing. methods: {method: rows}."""
+    return min(sum(r["merged_nodes"] for r in rows) / len(rows) for rows in methods.values()) > SATURATED
 
 
 def verdict(test):
@@ -280,20 +287,28 @@ def report(args):
         lines.append(f"| {s_:g} | {r_:g} | {w_:g} | {t['start']} | {CONTROLS[t['control']]} | "
                      f"{MEASURES[t['measure']]} | {t['diff']:+.4f} [{t['low']:+.4f}, {t['high']:+.4f}] | "
                      f"{t['effect']:+.2f} | {t['p']:.2g}{' *' if t['p'] < 0.05 else ''} | {t['verdict']} |")
+    full = {setting for setting, methods in table.items() if saturated(methods)}
     lines += ["", "## Décompte des verdicts", "",
               "Nombre de (réglage, départ) par verdict ; entre parenthèses, le nombre de différences "
-              "significatives (p < 0,05) quelle que soit leur taille.", "",
-              "| témoin | mesure | écran mieux | écran pire | équivalent | indécis | total |", "|---|---|---|---|---|---|---|"]
-    for control in CONTROLS:
-        for m in COMPARED:
-            group = [t for t in tests if t["control"] == control and t["measure"] == m]
-            if not group:
-                continue
-            count = {v: sum(t["verdict"] == v for t in group) for v in VERDICTS}
-            significant = {sign: sum(t["p"] < 0.05 and np.sign(t["diff"]) == sign for t in group) for sign in (-1, 1)}
-            lines.append(f"| {CONTROLS[control]} | {MEASURES[m]} | {count['mieux']} ({significant[-1]}) | "
-                         f"{count['pire']} ({significant[1]}) | {count['équivalent'] if m == 'stress' else '–'} | "
-                         f"{count['indécis']} | {len(group)} |")
+              "significatives (p < 0,05) quelle que soit leur taille."]
+    groups = [("Tous les réglages", tests)]
+    if full:
+        names = ", ".join(f"{s_:g} px / r = {r_:g}" for s_, r_, _ in sorted(full))
+        groups.append((f"Hors réglages saturés ({names} : toutes les méthodes y fusionnent plus de "
+                       f"{SATURATED:.0%} des nœuds)", [t for t in tests if t["setting"] not in full]))
+    for title, kept in groups:
+        lines += ["", f"### {title}", "",
+                  "| témoin | mesure | écran mieux | écran pire | équivalent | indécis | total |", "|---|---|---|---|---|---|---|"]
+        for control in CONTROLS:
+            for m in COMPARED:
+                group = [t for t in kept if t["control"] == control and t["measure"] == m]
+                if not group:
+                    continue
+                count = {v: sum(t["verdict"] == v for t in group) for v in VERDICTS}
+                significant = {sign: sum(t["p"] < 0.05 and np.sign(t["diff"]) == sign for t in group) for sign in (-1, 1)}
+                lines.append(f"| {CONTROLS[control]} | {MEASURES[m]} | {count['mieux']} ({significant[-1]}) | "
+                             f"{count['pire']} ({significant[1]}) | {count['équivalent'] if m == 'stress' else '–'} | "
+                             f"{count['indécis']} | {len(group)} |")
     lines += selection_lines(suffix)
     (OUT / f"results_resolution{suffix}.md").write_text("\n".join(lines) + "\n")
     figures(table, args.quick)

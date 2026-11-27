@@ -57,6 +57,13 @@ def test_report_end_to_end(tmp_path):
             assert (tmp_path / f"{m}_{name}.png").stat().st_size > 10_000
 
 
+def test_saturated_setting():
+    script = load_script()
+    rows = lambda *values: [{"merged_nodes": v} for v in values]  # noqa: E731
+    assert script.saturated({"kk": rows(0.9, 0.95), "ours": rows(0.8, 0.9)})  # even the best merges 85 %
+    assert not script.saturated({"kk": rows(0.9, 0.95), "ours": rows(0.2, 0.4)})  # one method copes
+
+
 def test_selection_lines(tmp_path):
     import json
     script = load_script()
